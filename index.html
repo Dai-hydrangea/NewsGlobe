@@ -9,8 +9,7 @@
 body { background:#000812; overflow:hidden; font-family:'Courier New',monospace; touch-action:none; }
 #hud {
   position:absolute; top:14px; left:16px;
-  color:#00e5ff; pointer-events:none;
-  text-shadow:0 0 10px #00e5ff;
+  color:#00e5ff; pointer-events:none; text-shadow:0 0 10px #00e5ff;
 }
 #hud .title { font-size:clamp(14px,4vw,20px); font-weight:bold; letter-spacing:4px; margin-bottom:3px; }
 #hud .sub   { font-size:clamp(9px,2.5vw,11px); color:#006677; letter-spacing:1px; }
@@ -20,9 +19,16 @@ body { background:#000812; overflow:hidden; font-family:'Courier New',monospace;
   position:absolute; top:50%; left:50%;
   transform:translate(-50%,-50%);
   color:#00e5ff; font-size:clamp(12px,3vw,14px); letter-spacing:3px;
-  text-shadow:0 0 10px #00e5ff; text-align:center; line-height:2;
-  pointer-events:none;
+  text-shadow:0 0 10px #00e5ff; text-align:center; line-height:2; pointer-events:none;
 }
+/* カテゴリ凡例 */
+#legend {
+  position:absolute; top:60px; left:16px;
+  pointer-events:none; font-size:clamp(9px,2vw,11px); letter-spacing:1px;
+  line-height:1.8;
+}
+#legend .item { display:flex; align-items:center; gap:6px; }
+#legend .dot  { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 </style>
 </head>
 <body>
@@ -30,6 +36,7 @@ body { background:#000812; overflow:hidden; font-family:'Courier New',monospace;
   <div class="title">NEWS GLOBE</div>
   <div class="sub" id="hint">LOADING...</div>
 </div>
+<div id="legend"></div>
 <div id="updated"></div>
 <div id="counter"></div>
 <div id="status">データ取得中...<br><span style="font-size:0.8em;color:#006677">しばらくお待ちください</span></div>
@@ -51,9 +58,52 @@ import { LineGeometry   } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial   } from 'three/addons/lines/LineMaterial.js';
 
 // ================================================================
-// RSS設定
+// カテゴリ定義
 // ================================================================
-// 複数プロキシ（順に試す）
+const CATEGORIES = {
+  politics: { label: '政治',      rgb: [255,  80,  60] },
+  world:    { label: '国際',      rgb: [255, 150,  50] },
+  economy:  { label: '経済',      rgb: [255, 210,   0] },
+  society:  { label: '社会',      rgb: [  0, 220, 255] },
+  sports:   { label: 'スポーツ',  rgb: [ 60, 255, 130] },
+  science:  { label: '科学/IT',   rgb: [180, 120, 255] },
+  culture:  { label: 'エンタメ',  rgb: [255, 120, 200] },
+};
+
+// ================================================================
+// RSSフィード（カテゴリ付き）
+// ================================================================
+const RSS_FEEDS = [
+  // ── NHK ──
+  { url: 'https://www.nhk.or.jp/rss/news/cat0.xml', cat: 'society'  }, // 主要
+  { url: 'https://www.nhk.or.jp/rss/news/cat1.xml', cat: 'society'  }, // 社会
+  { url: 'https://www.nhk.or.jp/rss/news/cat3.xml', cat: 'politics' }, // 政治
+  { url: 'https://www.nhk.or.jp/rss/news/cat4.xml', cat: 'economy'  }, // 経済
+  { url: 'https://www.nhk.or.jp/rss/news/cat5.xml', cat: 'world'    }, // 国際
+  { url: 'https://www.nhk.or.jp/rss/news/cat6.xml', cat: 'sports'   }, // スポーツ
+  { url: 'https://www.nhk.or.jp/rss/news/cat7.xml', cat: 'culture'  }, // 文化・エンタメ
+  { url: 'https://www.nhk.or.jp/rss/news/cat8.xml', cat: 'science'  }, // 科学・医療
+  // ── Yahoo Japan ──
+  { url: 'https://news.yahoo.co.jp/rss/topics/top-picks.xml',    cat: 'society'  },
+  { url: 'https://news.yahoo.co.jp/rss/topics/sports.xml',       cat: 'sports'   },
+  { url: 'https://news.yahoo.co.jp/rss/topics/entertainment.xml',cat: 'culture'  },
+  { url: 'https://news.yahoo.co.jp/rss/topics/it.xml',           cat: 'science'  },
+  { url: 'https://news.yahoo.co.jp/rss/topics/economy.xml',      cat: 'economy'  },
+];
+
+const MAX_WORDS = 80;
+const MAX_EDGES = 100;
+const STOP = new Set([
+  'について','による','として','ている','された','される','など','ため',
+  'この','その','また','さらに','めぐり','めぐる','ことで','において',
+  'に関して','よると','以上','以下','以内','以前','以降',
+  '最大','最小','最高','最低','報道','発表','報告','関係','問題',
+  '状況','対応','実施','予定','確認','影響','可能','必要','重要','開始','終了',
+]);
+
+// ================================================================
+// CORS プロキシ（順に試す）
+// ================================================================
 const PROXIES = [
   async url => {
     const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
@@ -69,109 +119,83 @@ const PROXIES = [
   },
 ];
 
-const RSS_FEEDS = [
-  'https://www.nhk.or.jp/rss/news/cat0.xml',
-  'https://www.nhk.or.jp/rss/news/cat4.xml',
-  'https://www.nhk.or.jp/rss/news/cat5.xml',
-  'https://www.nhk.or.jp/rss/news/cat2.xml',
-  'https://www.nhk.or.jp/rss/news/cat6.xml',
-  'https://news.yahoo.co.jp/rss/topics/top-picks.xml',
-];
-const MAX_WORDS = 80;
-const MAX_EDGES = 100;
-const STOP = new Set([
-  'について','による','として','ている','された','される','など','ため',
-  'この','その','また','さらに','めぐり','めぐる','ことで','において',
-  'に関して','よると','以上','以下','以内','以前','以降',
-  '最大','最小','最高','最低','報道','発表','報告','関係','問題',
-  '状況','対応','実施','予定','確認','影響','可能','必要','重要',
-  '開始','終了',
-]);
-
-// ================================================================
-// RSS取得
-// ================================================================
-function withTimeout(promise, ms) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
-  ]);
+function withTimeout(p, ms) {
+  return Promise.race([p, new Promise((_,r)=>setTimeout(()=>r(new Error('timeout')),ms))]);
 }
 
 function parseXML(xml) {
   const doc = new DOMParser().parseFromString(xml, 'text/xml');
-  const out = [];
-  for (const item of doc.querySelectorAll('item')) {
-    const title = item.querySelector('title')?.textContent?.trim();
+  return [...doc.querySelectorAll('item')].map(item => {
+    const title  = item.querySelector('title')?.textContent?.trim() || '';
     const linkEl = item.querySelector('link');
-    let link = linkEl?.textContent?.trim() || '';
+    let link     = linkEl?.textContent?.trim() || '';
     if (!link && linkEl) link = linkEl.nextSibling?.textContent?.trim() || '';
-    if (title) out.push({ title, link });
-  }
-  return out;
+    return title ? { title, link } : null;
+  }).filter(Boolean);
 }
 
-async function fetchRSS(url) {
+async function fetchFeed({ url, cat }) {
   for (const proxy of PROXIES) {
     try {
       const xml   = await withTimeout(proxy(url), 12000);
       const items = parseXML(xml);
-      if (items.length) return items;
-    } catch { /* 次のプロキシを試す */ }
+      if (items.length) return items.map(i => ({ ...i, cat }));
+    } catch { /* 次のプロキシへ */ }
   }
   return [];
 }
 
 // ================================================================
-// キーワード抽出
+// キーワード抽出・集計（改善②：カタカナ重みを×1に統一）
 // ================================================================
-function keywords(text) {
-  const found = new Set();
-  for (const m of text.matchAll(/[ァ-ヴー]{3,}/g)) found.add(m[0]);
-  for (const m of text.matchAll(/[一-龯]{2,6}/g))  { if (!STOP.has(m[0])) found.add(m[0]); }
-  return [...found];
+function kws(text) {
+  const s = new Set();
+  for (const m of text.matchAll(/[ァ-ヴー]{3,}/g)) s.add(m[0]);
+  for (const m of text.matchAll(/[一-龯]{2,6}/g))  if (!STOP.has(m[0])) s.add(m[0]);
+  return [...s];
 }
 
 function extractData(items) {
-  // ① 単語カウント
-  const counter = new Map();
-  for (const { title } of items) {
-    for (const m of title.matchAll(/[ァ-ヴー]{3,}/g)) counter.set(m[0], (counter.get(m[0])||0) + 2);
-    for (const m of title.matchAll(/[一-龯]{2,6}/g))  {
-      if (!STOP.has(m[0])) counter.set(m[0], (counter.get(m[0])||0) + 1);
+  const counter  = new Map();
+  const catHits  = new Map(); // word → {cat: count}
+  const wordUrl  = new Map();
+
+  for (const { title, link, cat } of items) {
+    const found = kws(title);
+    for (const w of found) {
+      // 改善②：カタカナも漢字も同じ重み×1
+      counter.set(w, (counter.get(w)||0) + 1);
+      if (!catHits.has(w)) catHits.set(w, {});
+      catHits.get(w)[cat] = (catHits.get(w)[cat]||0) + 1;
+      if (link && !wordUrl.has(w)) wordUrl.set(w, link);
     }
   }
+
   const sorted  = [...counter.entries()].sort((a,b)=>b[1]-a[1]).slice(0, MAX_WORDS);
   const topSet  = new Set(sorted.map(([w])=>w));
   const wordIdx = new Map(sorted.map(([w],i)=>[w,i]));
 
-  // ② URL収集
-  const wordUrl = new Map();
-  for (const { title, link } of items) {
-    if (!link) continue;
-    for (const kw of keywords(title)) {
-      if (topSet.has(kw) && !wordUrl.has(kw)) wordUrl.set(kw, link);
-    }
-  }
+  const words = sorted.map(([text, count]) => {
+    // 最も多くヒットしたカテゴリを代表カテゴリに
+    const hits    = catHits.get(text) || {};
+    const domCat  = Object.entries(hits).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'society';
+    const url     = wordUrl.get(text) || `https://news.yahoo.co.jp/search?p=${encodeURIComponent(text)}`;
+    return { text, count, cat: domCat, url };
+  });
 
-  const words = sorted.map(([text, count]) => ({
-    text, count,
-    url: wordUrl.get(text) || `https://news.yahoo.co.jp/search?p=${encodeURIComponent(text)}`,
-  }));
-
-  // ③ 共起カウント
+  // 共起
   const pairCnt = new Map();
   for (const { title } of items) {
-    const found = [...new Set(keywords(title).filter(w => topSet.has(w)))].sort();
-    for (let i = 0; i < found.length; i++)
-      for (let j = i+1; j < found.length; j++) {
-        const key = found[i] + '|' + found[j];
-        pairCnt.set(key, (pairCnt.get(key)||0) + 1);
+    const found = [...new Set(kws(title).filter(w => topSet.has(w)))].sort();
+    for (let i=0; i<found.length; i++)
+      for (let j=i+1; j<found.length; j++) {
+        const key = found[i]+'|'+found[j];
+        pairCnt.set(key, (pairCnt.get(key)||0)+1);
       }
   }
   const edges = [...pairCnt.entries()]
-    .map(([key, weight]) => { const [a,b]=key.split('|'); return {a,b,weight}; })
-    .filter(e => e.weight >= 2)
+    .map(([k,w])=>{ const [a,b]=k.split('|'); return {a,b,weight:w}; })
+    .filter(e=>e.weight>=2)
     .sort((a,b)=>b.weight-a.weight)
     .slice(0, MAX_EDGES);
 
@@ -179,148 +203,124 @@ function extractData(items) {
 }
 
 // ================================================================
-// スプリングレイアウト（球面上）
+// スプリングレイアウト（球面）
 // ================================================================
 function springLayout(words, edges, wordIdx, radius=93, iters=200) {
   const n = words.length;
   if (!n) return [];
-
-  // Fibonacci球面で初期化
-  const pts = [];
-  for (let i = 0; i < n; i++) {
-    const phi   = Math.acos(1 - 2*(i+0.5)/n);
-    const theta = Math.PI * (1+Math.sqrt(5)) * i;
-    pts.push([Math.sin(phi)*Math.cos(theta), Math.cos(phi), Math.sin(phi)*Math.sin(theta)]);
-  }
-
+  const pts = Array.from({length:n}, (_,i)=>{
+    const phi=Math.acos(1-2*(i+0.5)/n), theta=Math.PI*(1+Math.sqrt(5))*i;
+    return [Math.sin(phi)*Math.cos(theta), Math.cos(phi), Math.sin(phi)*Math.sin(theta)];
+  });
   const maxW = edges.length ? Math.max(...edges.map(e=>e.weight)) : 1;
   const adj  = new Map();
   for (const e of edges) {
-    const a = wordIdx.get(e.a), b = wordIdx.get(e.b);
-    if (a==null||b==null) continue;
-    const key = Math.min(a,b) + '_' + Math.max(a,b);
-    adj.set(key, e.weight / maxW);
+    const a=wordIdx.get(e.a), b=wordIdx.get(e.b);
+    if (a!=null&&b!=null) adj.set(Math.min(a,b)+'_'+Math.max(a,b), e.weight/maxW);
   }
-
   const K_ATTR=0.18, K_REP=0.006;
-  const forces = Array.from({length:n}, ()=>[0,0,0]);
-
-  for (let step = 0; step < iters; step++) {
-    const temp = 1 - step/iters;
-    for (let i=0;i<n;i++) forces[i][0]=forces[i][1]=forces[i][2]=0;
-
-    for (let i=0;i<n;i++) {
-      for (let j=i+1;j<n;j++) {
-        const dx=pts[j][0]-pts[i][0], dy=pts[j][1]-pts[i][1], dz=pts[j][2]-pts[i][2];
-        const dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
-        if (dist<1e-6) continue;
-        const ux=dx/dist, uy=dy/dist, uz=dz/dist;
-
-        // 斥力
-        const rep = K_REP/(dist*dist);
-        forces[i][0]-=ux*rep; forces[i][1]-=uy*rep; forces[i][2]-=uz*rep;
-        forces[j][0]+=ux*rep; forces[j][1]+=uy*rep; forces[j][2]+=uz*rep;
-
-        // 引力
-        const key = Math.min(i,j)+'_'+Math.max(i,j);
-        if (adj.has(key)) {
-          const attr = K_ATTR * adj.get(key) * dist;
-          forces[i][0]+=ux*attr; forces[i][1]+=uy*attr; forces[i][2]+=uz*attr;
-          forces[j][0]-=ux*attr; forces[j][1]-=uy*attr; forces[j][2]-=uz*attr;
-        }
-      }
+  const f = Array.from({length:n},()=>[0,0,0]);
+  for (let s=0;s<iters;s++) {
+    const t=1-s/iters;
+    for (let i=0;i<n;i++) f[i][0]=f[i][1]=f[i][2]=0;
+    for (let i=0;i<n;i++) for (let j=i+1;j<n;j++) {
+      const dx=pts[j][0]-pts[i][0],dy=pts[j][1]-pts[i][1],dz=pts[j][2]-pts[i][2];
+      const d=Math.sqrt(dx*dx+dy*dy+dz*dz); if(d<1e-6)continue;
+      const ux=dx/d,uy=dy/d,uz=dz/d;
+      const rep=K_REP/(d*d);
+      f[i][0]-=ux*rep;f[i][1]-=uy*rep;f[i][2]-=uz*rep;
+      f[j][0]+=ux*rep;f[j][1]+=uy*rep;f[j][2]+=uz*rep;
+      const key=Math.min(i,j)+'_'+Math.max(i,j);
+      if(adj.has(key)){const attr=K_ATTR*adj.get(key)*d;f[i][0]+=ux*attr;f[i][1]+=uy*attr;f[i][2]+=uz*attr;f[j][0]-=ux*attr;f[j][1]-=uy*attr;f[j][2]-=uz*attr;}
     }
-
     for (let i=0;i<n;i++) {
-      const [nx,ny,nz]=pts[i];
-      const [fx,fy,fz]=forces[i];
-      const dot=fx*nx+fy*ny+fz*nz;
-      pts[i][0]+=(fx-dot*nx)*temp;
-      pts[i][1]+=(fy-dot*ny)*temp;
-      pts[i][2]+=(fz-dot*nz)*temp;
+      const [nx,ny,nz]=pts[i],[fx,fy,fz]=f[i],dot=fx*nx+fy*ny+fz*nz;
+      pts[i][0]+=(fx-dot*nx)*t;pts[i][1]+=(fy-dot*ny)*t;pts[i][2]+=(fz-dot*nz)*t;
       const d=Math.sqrt(pts[i][0]**2+pts[i][1]**2+pts[i][2]**2);
-      if (d>0) { pts[i][0]/=d; pts[i][1]/=d; pts[i][2]/=d; }
+      if(d>0){pts[i][0]/=d;pts[i][1]/=d;pts[i][2]/=d;}
     }
   }
-  return pts.map(p=>[p[0]*radius, p[1]*radius, p[2]*radius]);
+  return pts.map(p=>[p[0]*radius,p[1]*radius,p[2]*radius]);
 }
 
 // ================================================================
-// Three.js セットアップ
+// Three.js
 // ================================================================
-const renderer = new THREE.WebGLRenderer({ antialias:true });
-renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setClearColor(0x000812);
 document.body.appendChild(renderer.domElement);
 
 const scene  = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 2000);
-camera.position.z = 230;
-
-const controls = new OrbitControls(camera, renderer.domElement);
+const camera = new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.1,2000);
+camera.position.z=230;
+const controls = new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true; controls.dampingFactor=0.06;
-controls.minDistance=110;    controls.maxDistance=600;
+controls.minDistance=110; controls.maxDistance=600;
 
-// Globe
-const globe = new THREE.Mesh(
-  new THREE.SphereGeometry(90,40,40),
-  new THREE.MeshBasicMaterial({color:0x003344,wireframe:true,transparent:true,opacity:0.11})
-);
+const globe=new THREE.Mesh(new THREE.SphereGeometry(90,40,40),
+  new THREE.MeshBasicMaterial({color:0x003344,wireframe:true,transparent:true,opacity:0.11}));
 scene.add(globe);
 
-// Rings
 const addRing=(r,col,op,rx=0,ry=0)=>{
   const m=new THREE.Mesh(new THREE.TorusGeometry(r,0.3,2,100),
     new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:op}));
-  m.rotation.x=rx; m.rotation.y=ry; scene.add(m);
+  m.rotation.x=rx;m.rotation.y=ry;scene.add(m);
 };
 addRing(90,0x006688,0.45);
 addRing(90,0x002233,0.25,Math.PI/2);
 addRing(90,0x002233,0.20,Math.PI/2,Math.PI/3);
 
-// Particles
 {
-  const n=400, pos=new Float32Array(n*3);
-  for(let i=0;i<n;i++){
-    const ph=Math.random()*Math.PI*2, th=Math.random()*Math.PI, r=250+Math.random()*400;
-    pos[i*3]=r*Math.sin(th)*Math.cos(ph); pos[i*3+1]=r*Math.cos(th); pos[i*3+2]=r*Math.sin(th)*Math.sin(ph);
-  }
-  const geo=new THREE.BufferGeometry();
-  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
-  scene.add(new THREE.Points(geo,new THREE.PointsMaterial({color:0x002244,size:1.0})));
+  const n=400,pos=new Float32Array(n*3);
+  for(let i=0;i<n;i++){const ph=Math.random()*Math.PI*2,th=Math.random()*Math.PI,r=250+Math.random()*400;pos[i*3]=r*Math.sin(th)*Math.cos(ph);pos[i*3+1]=r*Math.cos(th);pos[i*3+2]=r*Math.sin(th)*Math.sin(ph);}
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(g,new THREE.PointsMaterial({color:0x002244,size:1.0})));
 }
 
-const worldGroup = new THREE.Group();
-scene.add(worldGroup);
+const worldGroup=new THREE.Group(); scene.add(worldGroup);
 
 // ================================================================
-// スプライト生成
+// スプライト生成（改善③：カテゴリ色）
 // ================================================================
-function makeSprite(text, fontSize, brightness) {
+function makeSprite(text, fontSize, brightness, cat) {
   const canvas=document.createElement('canvas'), ctx=canvas.getContext('2d');
   const fs=Math.round(Math.max(11,Math.min(54,fontSize)));
   ctx.font=`bold ${fs}px "Courier New",monospace`;
   const tw=ctx.measureText(text).width;
   canvas.width=Math.ceil(tw)+28; canvas.height=fs+18;
   ctx.font=`bold ${fs}px "Courier New",monospace`;
-  const g=Math.floor(80+brightness*175), b=Math.floor(80+brightness*120);
-  const col=`rgba(0,${g},${b},1)`;
+  const base = CATEGORIES[cat]?.rgb || CATEGORIES.society.rgb;
+  const br   = 0.25 + brightness*0.75;
+  const r=Math.floor(base[0]*br), g=Math.floor(base[1]*br), b=Math.floor(base[2]*br);
+  const col=`rgba(${r},${g},${b},1)`;
   ctx.shadowColor=col; ctx.shadowBlur=16; ctx.fillStyle=col;
   ctx.fillText(text,14,fs+4); ctx.shadowBlur=6; ctx.fillText(text,14,fs+4);
   const tex=new THREE.CanvasTexture(canvas);
   const mat=new THREE.SpriteMaterial({map:tex,transparent:true,depthWrite:false});
   const sp=new THREE.Sprite(mat);
-  sp.scale.set(canvas.width*0.20, canvas.height*0.20, 1);
+  sp.scale.set(canvas.width*0.20,canvas.height*0.20,1);
   return sp;
 }
 
-const resVec = new THREE.Vector2(innerWidth, innerHeight);
-function makeLine2(pA, pB, lw, op, color) {
+const resVec=new THREE.Vector2(innerWidth,innerHeight);
+function makeLine2(pA,pB,lw,op,color){
   const geo=new LineGeometry();
   geo.setPositions([pA[0],pA[1],pA[2],pB[0],pB[1],pB[2]]);
   const mat=new LineMaterial({color,linewidth:lw,transparent:true,opacity:op,depthWrite:false,resolution:resVec});
   return new Line2(geo,mat);
+}
+
+// ================================================================
+// 凡例を描画
+// ================================================================
+function renderLegend(usedCats) {
+  const el=document.getElementById('legend');
+  el.innerHTML=Object.entries(CATEGORIES)
+    .filter(([k])=>usedCats.has(k))
+    .map(([,v])=>`<div class="item"><div class="dot" style="background:rgb(${v.rgb.join(',')})"></div><span style="color:rgb(${v.rgb.map(c=>Math.floor(c*0.7)).join(',')});font-size:10px">${v.label}</span></div>`)
+    .join('');
 }
 
 // ================================================================
@@ -329,34 +329,38 @@ function makeLine2(pA, pB, lw, op, color) {
 function updateScene(words, edges, positions) {
   while(worldGroup.children.length){
     const o=worldGroup.children[0];
-    if(o.geometry) o.geometry.dispose();
+    if(o.geometry)o.geometry.dispose();
     if(o.material){if(o.material.map)o.material.map.dispose();o.material.dispose();}
     worldGroup.remove(o);
   }
   if(!words.length) return;
 
-  const maxC = words[0].count;
-  const posMap = new Map();
+  const maxC=words[0].count;
+  const posMap=new Map();
+  const usedCats=new Set();
 
   words.forEach((w,i)=>{
     const ratio=w.count/maxC;
-    const sp=makeSprite(w.text, 10+ratio*42, ratio);
+    const sp=makeSprite(w.text, 10+ratio*42, ratio, w.cat);
     sp.position.set(...positions[i]);
     sp.userData={url:w.url, text:w.text};
     posMap.set(w.text, positions[i]);
+    usedCats.add(w.cat);
     worldGroup.add(sp);
   });
 
   if(edges.length){
     const maxW=edges[0].weight;
     for(const e of edges){
-      const pA=posMap.get(e.a), pB=posMap.get(e.b);
-      if(!pA||!pB) continue;
+      const pA=posMap.get(e.a),pB=posMap.get(e.b);
+      if(!pA||!pB)continue;
       const ratio=e.weight/maxW;
-      const g=Math.floor(60+ratio*140), b2=Math.floor(60+ratio*100);
-      worldGroup.add(makeLine2(pA,pB, 0.6+ratio*2.9, 0.12+ratio*0.55, new THREE.Color(0,g/255,b2/255)));
+      const g=Math.floor(60+ratio*140),b2=Math.floor(60+ratio*100);
+      worldGroup.add(makeLine2(pA,pB,0.6+ratio*2.9,0.12+ratio*0.55,new THREE.Color(0,g/255,b2/255)));
     }
   }
+
+  renderLegend(usedCats);
 }
 
 // ================================================================
@@ -366,23 +370,21 @@ async function loadAndUpdate() {
   document.getElementById('status').style.display='block';
   document.getElementById('hint').textContent='LOADING...';
 
-  const allItems = (await Promise.all(RSS_FEEDS.map(fetchRSS))).flat();
+  const allItems=(await Promise.all(RSS_FEEDS.map(fetchFeed))).flat();
+
   if(!allItems.length){
-    document.getElementById('status').innerHTML=
-      'データ取得失敗<br><span style="font-size:0.8em;color:#006677">1分後に自動再試行します</span>';
+    document.getElementById('status').innerHTML='データ取得失敗<br><span style="font-size:0.8em;color:#006677">1分後に自動再試行します</span>';
     return;
   }
 
-  const { words, edges, wordIdx } = extractData(allItems);
-  const positions = springLayout(words, edges, wordIdx);
-  updateScene(words, edges, positions);
+  const {words,edges,wordIdx}=extractData(allItems);
+  const positions=springLayout(words,edges,wordIdx);
+  updateScene(words,edges,positions);
 
   document.getElementById('status').style.display='none';
   document.getElementById('hint').textContent='DRAG: ROTATE  |  SCROLL: ZOOM  |  TAP: NEWS';
-  document.getElementById('updated').textContent =
-    'LAST UPDATE: ' + new Date().toLocaleString('ja-JP');
-  document.getElementById('counter').textContent =
-    `WORDS: ${words.length}  /  LINKS: ${edges.length}  /  HEADLINES: ${allItems.length}`;
+  document.getElementById('updated').textContent='LAST UPDATE: '+new Date().toLocaleString('ja-JP');
+  document.getElementById('counter').textContent=`WORDS: ${words.length}  /  LINKS: ${edges.length}  /  HEADLINES: ${allItems.length}`;
 }
 
 loadAndUpdate();
@@ -393,43 +395,30 @@ setInterval(loadAndUpdate, 60000);
 // ================================================================
 const raycaster=new THREE.Raycaster();
 const mouse=new THREE.Vector2();
-
 function getHit(e){
-  const x=e.clientX??e.touches?.[0]?.clientX;
-  const y=e.clientY??e.touches?.[0]?.clientY;
-  if(x==null) return null;
-  mouse.x=(x/innerWidth)*2-1;
-  mouse.y=-(y/innerHeight)*2+1;
+  const x=e.clientX??e.touches?.[0]?.clientX, y=e.clientY??e.touches?.[0]?.clientY;
+  if(x==null)return null;
+  mouse.x=(x/innerWidth)*2-1; mouse.y=-(y/innerHeight)*2+1;
   raycaster.setFromCamera(mouse,camera);
   for(const h of raycaster.intersectObjects(worldGroup.children))
-    if(h.object.userData.url) return h.object;
+    if(h.object.userData.url)return h.object;
   return null;
 }
-
-renderer.domElement.addEventListener('click', e=>{
-  const sp=getHit(e);
-  if(sp) window.open(sp.userData.url,'_blank');
-});
-renderer.domElement.addEventListener('mousemove', e=>{
-  renderer.domElement.style.cursor=getHit(e)?'pointer':'default';
-});
+renderer.domElement.addEventListener('click',e=>{const sp=getHit(e);if(sp)window.open(sp.userData.url,'_blank');});
+renderer.domElement.addEventListener('mousemove',e=>{renderer.domElement.style.cursor=getHit(e)?'pointer':'default';});
 
 // ================================================================
 // アニメーション
 // ================================================================
-const ROT=0.0007;
 (function animate(){
   requestAnimationFrame(animate);
-  globe.rotation.y+=ROT; worldGroup.rotation.y+=ROT;
-  controls.update();
-  renderer.render(scene,camera);
+  globe.rotation.y+=0.0007; worldGroup.rotation.y+=0.0007;
+  controls.update(); renderer.render(scene,camera);
 })();
 
 window.addEventListener('resize',()=>{
-  camera.aspect=innerWidth/innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth,innerHeight);
-  resVec.set(innerWidth,innerHeight);
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight); resVec.set(innerWidth,innerHeight);
 });
 </script>
 </body>
