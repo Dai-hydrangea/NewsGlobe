@@ -53,7 +53,22 @@ import { LineMaterial   } from 'three/addons/lines/LineMaterial.js';
 // ================================================================
 // RSS設定
 // ================================================================
-const PROXY = 'https://api.allorigins.win/get?url=';
+// 複数プロキシ（順に試す）
+const PROXIES = [
+  async url => {
+    const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
+    return (await r.json()).contents;
+  },
+  async url => {
+    const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`);
+    return await r.text();
+  },
+  async url => {
+    const r = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`);
+    return await r.text();
+  },
+];
+
 const RSS_FEEDS = [
   'https://www.nhk.or.jp/rss/news/cat0.xml',
   'https://www.nhk.or.jp/rss/news/cat4.xml',
@@ -76,23 +91,35 @@ const STOP = new Set([
 // ================================================================
 // RSS取得
 // ================================================================
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]);
+}
+
+function parseXML(xml) {
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  const out = [];
+  for (const item of doc.querySelectorAll('item')) {
+    const title = item.querySelector('title')?.textContent?.trim();
+    const linkEl = item.querySelector('link');
+    let link = linkEl?.textContent?.trim() || '';
+    if (!link && linkEl) link = linkEl.nextSibling?.textContent?.trim() || '';
+    if (title) out.push({ title, link });
+  }
+  return out;
+}
+
 async function fetchRSS(url) {
-  try {
-    const res  = await fetch(PROXY + encodeURIComponent(url), { signal: AbortSignal.timeout(12000) });
-    const json = await res.json();
-    const doc  = new DOMParser().parseFromString(json.contents, 'text/xml');
-    const out  = [];
-    for (const item of doc.querySelectorAll('item')) {
-      const titleEl = item.querySelector('title');
-      const linkEl  = item.querySelector('link');
-      const title   = titleEl?.textContent?.trim();
-      // <link> in RSS is sometimes a text node after the tag
-      let link = linkEl?.textContent?.trim() || '';
-      if (!link && linkEl) link = linkEl.nextSibling?.textContent?.trim() || '';
-      if (title) out.push({ title, link });
-    }
-    return out;
-  } catch { return []; }
+  for (const proxy of PROXIES) {
+    try {
+      const xml   = await withTimeout(proxy(url), 12000);
+      const items = parseXML(xml);
+      if (items.length) return items;
+    } catch { /* 次のプロキシを試す */ }
+  }
+  return [];
 }
 
 // ================================================================
@@ -341,7 +368,8 @@ async function loadAndUpdate() {
 
   const allItems = (await Promise.all(RSS_FEEDS.map(fetchRSS))).flat();
   if(!allItems.length){
-    document.getElementById('status').textContent='取得失敗。ネットワークを確認してください。';
+    document.getElementById('status').innerHTML=
+      'データ取得失敗<br><span style="font-size:0.8em;color:#006677">1分後に自動再試行します</span>';
     return;
   }
 
